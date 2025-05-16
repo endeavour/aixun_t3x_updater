@@ -23,7 +23,7 @@ class T3XUpdater():
         pass
 
     def get_port(self):
-        ports = [p.device for p in list_ports.comports() if p.serial_number and p.serial_number.startswith(("JCID_T3","AIXUN_T320","JCID_T420D"))]
+        ports = [p.device for p in list_ports.comports() if p.serial_number and p.serial_number.startswith(("JCID_T3","AIXUN_T320","JCID_T420D","AIXUN_T413"))]
         if len(ports) > 1:
             error("Multiple T3x attached.")
             sys.exit(1)
@@ -41,12 +41,24 @@ class T3XUpdater():
         debug(f"TX: {data[:32]}{'...' if len(data) > 32 else ''}")
         self.ser.write(data)
 
+        time.sleep(0.05)
         # first read 1 byte to use timeout mechanism
         rx  = self.ser.read(1)
         rx += self.ser.read_all().rstrip(b'\x00')
 
         debug(f"RX: {rx}")
         return rx
+
+    def transfer2(self, data, read):
+        debug(f"TX: {data[:32]}{'...' if len(data) > 32 else ''}")
+        self.ser.write(data)
+
+        # first read 1 byte to use timeout mechanism
+        rx  = self.ser.read(read).rstrip(b'\x00')
+        #rx += self.ser.read_all().rstrip(b'\x00')
+
+        debug(f"RX: {rx}")
+        return rx        
 
     def get_identity(self):
         return self.transfer(b'JC_identity')
@@ -58,11 +70,12 @@ class T3XUpdater():
         return self.get_raw_version()[-4:]
 
     def get_product(self):
-        return self.get_raw_version().split(b'_')[2]
+        x = self.get_raw_version()
+        return x.split(b'_')[1]
 
     def parse_update(self, file):
         self.file = open(file, 'rb')
-        if self.file.read(4) == b'JCID':
+        if self.file.read(5) == b'AIXUN':
             debug("Detected update file")
         else:
             error("Wrong firmware file. Update file required.")
@@ -130,6 +143,8 @@ class T3XUpdater():
         self.connect()
         product = self.get_product()
         if not fw_product == product:
+            print(fw_product)
+            print(product)
             error(f"Update product mismatch! fw={fw_product.decode()} vs. hw={product.decode()}")
             return False
 
@@ -145,6 +160,7 @@ class T3XUpdater():
         bl_raw_version = self.get_raw_version()
         update_str = f'0x{fw_size:08x}{bl_raw_version[8:].decode()}'.encode()
         ack = self.transfer(update_str)
+        print(ack)
         if not ack == b'update_jcxx':
             error("No update start ack. Aborting.")
             return False
@@ -157,11 +173,15 @@ class T3XUpdater():
                 break
 
             try:
-                ack = self.transfer(data)
+                #ack = self.transfer(data)
+                ack = self.transfer2(data, 8)
                 if not ack == b'ack_jcxx':
                     error("Update failed!")
+                    print(ack)
                     return False
-            except serial.serialutil.SerialException:
+                time.sleep(0.05)
+            except serial.serialutil.SerialException as var:
+                print('Exception Details-> ', var)
                 if offset == fw_size - 256:
                     print(flush=True)
                     warning("Got serial.serialutil.SerialException: The soldering station probably finished the update and restarted. Let's try to reconnect...")
